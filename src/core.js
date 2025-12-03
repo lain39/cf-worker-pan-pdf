@@ -6,10 +6,10 @@ const DEFAULT_UA = "netdisk";
 const DEFAULT_PDF_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 export async function handleList(body) {
-  const { link, dir } = body; 
+  const { link, dir } = body;
   if (!link) throw new Error("Link is required");
   const { surl, pwd } = getShareInfo(link);
-  
+
   const res = await BaiduDiskClient.getSharedList(surl, pwd, dir);
   return { success: true, data: res.data };
 }
@@ -20,35 +20,35 @@ export async function handleDownload(body, clientIP, env, ctx, userAgent) {
 
   let client = null;
   let validCookieFound = false;
-  
+
   // 1. 优先尝试用户传入的自定义 Cookie
   if (cookie && cookie.trim().length > 0 && cookie.includes("BDUSS")) {
-      client = new BaiduDiskClient(cookie, clientIP);
-      if (await client.init()) validCookieFound = true;
+    client = new BaiduDiskClient(cookie, clientIP);
+    if (await client.init()) validCookieFound = true;
   }
 
   // 2. 如果没有自定义 Cookie，则从服务器池中获取
   if (!validCookieFound) {
-      const serverCookies = getServerCookies(env);
-      if (serverCookies.length === 0) throw new Error("无可用 Cookie，请联系管理员。");
-      
-      // 随机打乱 Cookie 顺序，实现随机轮询
-      // Fisher-Yates Shuffle 算法，保证每个 Cookie 都有机会被选中，且只试一次
-      const shuffledCookies = shuffleArray(serverCookies);
-      
-      for (const sCookie of shuffledCookies) {
-          const tempClient = new BaiduDiskClient(sCookie, clientIP);
-          // 尝试初始化
-          if (await tempClient.init()) {
-              client = tempClient;
-              validCookieFound = true;
-              // 找到一个可用的就立即停止，避免浪费资源
-              break;
-          } else {
-             // 仅在开发或调试模式下输出，避免日志爆炸
-             console.warn("Cookie check failed for one account, trying next...");
-          }
+    const serverCookies = getServerCookies(env);
+    if (serverCookies.length === 0) throw new Error("无可用 Cookie，请联系管理员。");
+
+    // 随机打乱 Cookie 顺序，实现随机轮询
+    // Fisher-Yates Shuffle 算法，保证每个 Cookie 都有机会被选中，且只试一次
+    const shuffledCookies = shuffleArray(serverCookies);
+
+    for (const sCookie of shuffledCookies) {
+      const tempClient = new BaiduDiskClient(sCookie, clientIP);
+      // 尝试初始化
+      if (await tempClient.init()) {
+        client = tempClient;
+        validCookieFound = true;
+        // 找到一个可用的就立即停止，避免浪费资源
+        break;
+      } else {
+        // 仅在开发或调试模式下输出，避免日志爆炸
+        console.warn("Cookie check failed for one account, trying next...");
       }
+    }
   }
 
   if (!validCookieFound || !client) throw new Error("所有 Cookie 均失效，无法执行操作。");
@@ -66,7 +66,7 @@ export async function handleDownload(body, clientIP, env, ctx, userAgent) {
       await client.transferFiles(fs_ids, share_data.shareid, share_data.uk, share_data.sekey, transferDir);
     } catch (e) {
       // 失败重试逻辑：先清理可能存在的残留目录，再重试
-      await client.deleteFiles(["/netdisk"]); 
+      await client.deleteFiles(["/netdisk"]);
       await client.createDir(transferDir);
       await client.transferFiles(fs_ids, share_data.shareid, share_data.uk, share_data.sekey, transferDir);
     }
@@ -78,7 +78,7 @@ export async function handleDownload(body, clientIP, env, ctx, userAgent) {
 
     const filesToProcess = localFiles.map(f => f.path);
     const pathInfoMap = {};
-    
+
     localFiles.forEach(f => {
       let relative = f.path;
       if (f.path.startsWith(transferDir)) relative = f.path.substring(transferDir.length + 1);
@@ -92,7 +92,7 @@ export async function handleDownload(body, clientIP, env, ctx, userAgent) {
       // 限制 150MB
       if (info.size > 150 * 1024 * 1024) {
         errors.push(`Skipped ${info.filename}: Size > 150MB`);
-        continue; 
+        continue;
       }
 
       const newPath = path + ".pdf";
@@ -100,7 +100,7 @@ export async function handleDownload(body, clientIP, env, ctx, userAgent) {
         const renamed = await client.renameFile(path, info.filename + ".pdf");
         if (renamed) {
           newPaths.push(newPath);
-          pathInfoMap[newPath] = info; 
+          pathInfoMap[newPath] = info;
         } else {
           errors.push(`Rename failed for ${info.filename}`);
         }
@@ -130,12 +130,12 @@ export async function handleDownload(body, clientIP, env, ctx, userAgent) {
         errors.push(`Failed to get link for ${info.filename}: ${e.message}`);
       }
     }
-    
+
     // 这里移除了 waitUntil 的删除逻辑，完全依赖 Cron 任务进行兜底清理
 
   } catch (e) {
     // 发生严重异常时立即尝试清理
-    try { await client.deleteFiles([transferDir]); } catch(err) {}
+    try { await client.deleteFiles([transferDir]); } catch (err) { }
     throw e;
   }
 
@@ -144,68 +144,68 @@ export async function handleDownload(body, clientIP, env, ctx, userAgent) {
 
 // Cron 清理任务
 export async function handleCleanDir(env) {
-    const serverCookies = getServerCookies(env);
-    if (serverCookies.length === 0) return "No cookies configured";
+  const serverCookies = getServerCookies(env);
+  if (serverCookies.length === 0) return "No cookies configured";
 
-    // 清理任务也用shuffleArray，避免总是消耗第一个账号
-    const shuffledCookies = shuffleArray(serverCookies);
+  // 清理任务也用shuffleArray，避免总是消耗第一个账号
+  const shuffledCookies = shuffleArray(serverCookies);
 
-    let client = null;
-    for (const cookie of shuffledCookies) {
-        const c = new BaiduDiskClient(cookie);
-        if (await c.init()) {
-            client = c;
-            break;
-        }
+  let client = null;
+  for (const cookie of shuffledCookies) {
+    const c = new BaiduDiskClient(cookie);
+    if (await c.init()) {
+      client = c;
+      break;
     }
-    if (!client) return "No valid cookies found";
+  }
+  if (!client) return "No valid cookies found";
 
-    try {
-        console.log("Starting scheduled cleanup of /netdisk");
-        await client.deleteFiles(["/netdisk"]);
-        return "Cleanup success";
-    } catch (e) {
-        return `Cleanup result: ${e.message}`;
-    }
+  try {
+    console.log("Starting scheduled cleanup of /netdisk");
+    await client.deleteFiles(["/netdisk"]);
+    return "Cleanup success";
+  } catch (e) {
+    return `Cleanup result: ${e.message}`;
+  }
 }
 
 export async function checkHealth(env) {
-    const serverCookies = getServerCookies(env);
-    const results = [];
-    // 健康检查仍然需要按顺序检查所有 Cookie
-    for(const cookie of serverCookies) {
-        const client = new BaiduDiskClient(cookie);
-        const alive = await client.init();
-        // 隐去敏感信息
-        const mask = cookie.substring(0, 10) + "..."; 
-        results.push({ mask, alive });
-    }
-    return results;
+  const serverCookies = getServerCookies(env);
+  const results = [];
+  // 健康检查仍然需要按顺序检查所有 Cookie
+  for (const cookie of serverCookies) {
+    const client = new BaiduDiskClient(cookie);
+    const alive = await client.init();
+    // 隐去敏感信息
+    const mask = cookie.substring(0, 10) + "...";
+    results.push({ mask, alive });
+  }
+  return results;
 }
 
 // --- Helper Functions ---
 
 // 解析环境变量中的 Cookie 数组
 function getServerCookies(env) {
-    try {
-        if (env.SERVER_COOKIES) {
-            const parsed = JSON.parse(env.SERVER_COOKIES);
-            if (Array.isArray(parsed)) return parsed;
-        }
-    } catch(e) {
-        console.error("Failed to parse SERVER_COOKIES", e);
+  try {
+    if (env.SERVER_COOKIES) {
+      const parsed = JSON.parse(env.SERVER_COOKIES);
+      if (Array.isArray(parsed)) return parsed;
     }
-    return [];
+  } catch (e) {
+    console.error("Failed to parse SERVER_COOKIES", e);
+  }
+  return [];
 }
 
 // Fisher-Yates 随机打乱数组
 function shuffleArray(array) {
-    const arr = [...array]; // 创建副本，不修改原数组
-    for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
-    return arr;
+  const arr = [...array]; // 创建副本，不修改原数组
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
 }
 
 function getShareInfo(link) {
@@ -220,10 +220,10 @@ function getShareInfo(link) {
 }
 
 async function recursiveListFiles(client, dirPath, resultList) {
-  if (resultList.length > 500) return; 
+  if (resultList.length > 500) return;
   const items = await client.listFiles(dirPath);
   for (const item of items) {
-    if (item.isdir == 1) { 
+    if (item.isdir == 1) {
       await recursiveListFiles(client, item.path, resultList);
     } else {
       resultList.push(item);
@@ -247,9 +247,52 @@ export class BaiduDiskClient {
     };
   }
 
-  async fetchJson(url, options = {}) {
+  updateCookies(setCookieArray) {
+    if (!setCookieArray || !Array.isArray(setCookieArray) || setCookieArray.length === 0) return;
+
+    const cookieMap = new Map();
+    // 1. 解析旧 Cookie
+    this.cookie.split(';').forEach(pair => {
+      const idx = pair.indexOf('=');
+      if (idx > -1) {
+        const k = pair.substring(0, idx).trim();
+        const v = pair.substring(idx + 1).trim();
+        cookieMap.set(k, v);
+      }
+    });
+
+    let hasChange = false;
+    // 2. 遍历新的 Set-Cookie 数组
+    for (const cookieStr of setCookieArray) {
+      const firstPart = cookieStr.split(';')[0];
+      const idx = firstPart.indexOf('=');
+      if (idx > -1) {
+        const k = firstPart.substring(0, idx).trim();
+        const v = firstPart.substring(idx + 1).trim();
+
+        if (k === '' || k.toLowerCase() === 'path' || k.toLowerCase() === 'domain') continue;
+
+        if (cookieMap.get(k) !== v) {
+          cookieMap.set(k, v);
+          hasChange = true;
+        }
+      }
+    }
+
+    // 3. 如果有更新，保存并持久化
+    if (hasChange) {
+      const newCookieStr = Array.from(cookieMap.entries())
+        .map(([k, v]) => `${k}=${v}`)
+        .join('; ');
+
+      this.commonHeaders["Cookie"] = newCookieStr;
+    }
+  }
+
+  async fetchJson(url, options = {}, shouldupdateCookies=false) {
     const headers = { ...this.commonHeaders, ...options.headers };
     const resp = await fetch(url, { ...options, headers });
+    if(shouldupdateCookies) this.updateCookies(resp.headers.getSetCookie());
     const data = await resp.json();
     return data;
   }
@@ -257,7 +300,7 @@ export class BaiduDiskClient {
   async init() {
     const api = "https://pan.baidu.com/api/gettemplatevariable?clienttype=12&app_id=web=1&fields=[%22bdstoken%22,%22token%22,%22uk%22,%22isdocuser%22,%22servertime%22]";
     try {
-      const data = await this.fetchJson(api);
+      const data = await this.fetchJson(api, undefined, true);
       if (data.errno === 0 && data.result) {
         this.bdstoken = data.result.bdstoken;
         return true;
@@ -273,19 +316,19 @@ export class BaiduDiskClient {
     const formData = new FormData();
     formData.append("shorturl", surl);
     formData.append("pwd", pwd);
-    
-    if (dir) { 
-        formData.append("root", "0"); 
-        formData.append("dir", dir); 
-    } else { 
-        formData.append("root", "1"); 
+
+    if (dir) {
+      formData.append("root", "0");
+      formData.append("dir", dir);
+    } else {
+      formData.append("root", "1");
     }
     formData.append("page", "1");
     formData.append("number", "1000");
     formData.append("order", "time");
-    
+
     const headers = { "User-Agent": "pan.baidu.com", "Cookie": "XFI=a5670f2f-f8ea-321f-0e65-2aa7030459eb; XFCS=945BEA7DFA30AC8B92389217A688C31B247D394739411C7F697F23C4660EB72F;" };
-    
+
     const resp = await fetch(api, { method: "POST", body: formData, headers: headers });
     const data = await resp.json();
     if (data.errno !== 0) throw new Error(`List error: ${data.errno}`);

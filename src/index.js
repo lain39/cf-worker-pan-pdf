@@ -8,7 +8,7 @@ export default {
    */
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    
+
     // 1. CORS 处理
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
@@ -28,15 +28,15 @@ export default {
         // 验证用户 Session
         const session = await verifySession(request, env);
         if (!session) {
-           if (url.pathname.startsWith("/api")) {
-             return new Response(JSON.stringify({ success: false, message: "Unauthorized" }), { 
-               status: 401, headers: corsHeaders 
-             });
-           } else {
-             // 重定向到 Linux.do 登录
-             const authUrl = `https://connect.linux.do/oauth2/authorize?client_id=${env.LINUX_DO_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(url.origin + '/auth/callback')}`;
-             return Response.redirect(authUrl, 302);
-           }
+          if (url.pathname.startsWith("/api")) {
+            return new Response(JSON.stringify({ success: false, message: "Unauthorized" }), {
+              status: 401, headers: corsHeaders
+            });
+          } else {
+            // 重定向到 Linux.do 登录
+            const authUrl = `https://connect.linux.do/oauth2/authorize?client_id=${env.LINUX_DO_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(url.origin + '/auth/callback')}`;
+            return Response.redirect(authUrl, 302);
+          }
         }
       }
 
@@ -52,7 +52,7 @@ export default {
       if (url.pathname.startsWith("/api")) {
         if (request.method !== "POST") throw new Error("Method not allowed");
         const body = await request.json();
-        
+
         // 获取客户端 IP
         const clientIP = request.headers.get("CF-Connecting-IP") || "127.0.0.1";
         // 获取客户端 User-Agent (用于替换 PDF_UA)
@@ -84,7 +84,7 @@ export default {
    */
   async scheduled(event, env, ctx) {
     console.log("Cron trigger fired at:", new Date(event.scheduledTime).toISOString());
-    
+
     // 任务1：检查 Cookie 池健康状态
     try {
       const result = await checkHealth(env);
@@ -95,10 +95,10 @@ export default {
 
     // 任务2：清理 /netdisk 文件夹 (兜底删除残留文件)
     try {
-        const cleanResult = await handleCleanDir(env);
-        console.log("Cleanup Result:", cleanResult);
+      const cleanResult = await handleCleanDir(env);
+      console.log("Cleanup Result:", cleanResult);
     } catch (e) {
-        console.error("Cleanup Failed:", e);
+      console.error("Cleanup Failed:", e);
     }
   }
 };
