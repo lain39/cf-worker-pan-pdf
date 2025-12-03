@@ -49,7 +49,7 @@ jobs:
                - `ENABLE_AUTH`: (明文) true
                - `SERVER_COOKIES`: (加密/Secret) 你的 Cookie JSON 数组，比如 ["BDUSS=xxx; STOKEN=yyy"]
                - `SESSION_SECRET`: (加密/Secret) 随机字符串
-               - `LINUX_DO_CLIENT_ID`: (明文) 你的 Client ID
+               - `LINUX_DO_CLIENT_ID`: (加密/Secret) 你的 Client ID
                - `LINUX_DO_CLIENT_SECRET`: (加密/Secret) 你的 Client Secret
             5. 去 **Settings -> Triggers** 添加 Cron Trigger（比如 `*/30 * * * *`）。
       
