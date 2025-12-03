@@ -1,0 +1,38 @@
+name: Build and Release Worker
+
+on:
+  push:
+    tags:
+      - 'v*' 
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write 
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Build Worker
+        run: npx wrangler deploy --dry-run --outdir dist
+
+      - name: Rename Output
+        run: mv dist/index.js dist/worker.js
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/worker.js
+          generate_release_notes: true 
+          draft: false
+          prerelease: false
