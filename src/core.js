@@ -19,12 +19,16 @@ export async function handleDownload(body, clientIP, env, ctx, userAgent) {
   if (!fs_ids || !share_data) throw new Error("Missing parameters");
 
   let client = null;
+  let isUserCookie = false;
   let validCookieFound = false;
 
   // 1. 优先尝试用户传入的自定义 Cookie
   if (cookie && cookie.trim().length > 0 && cookie.includes("BDUSS")) {
     client = new BaiduDiskClient(cookie, clientIP);
-    if (await client.init()) validCookieFound = true;
+    if (await client.init()) {
+      isUserCookie = true;
+      validCookieFound = true;
+    }
   }
 
   // 2. 如果没有自定义 Cookie，则从服务器池中获取
@@ -131,7 +135,19 @@ export async function handleDownload(body, clientIP, env, ctx, userAgent) {
       }
     }
 
-    // 这里移除了 waitUntil 的删除逻辑，完全依赖 Cron 任务进行兜底清理
+    // 服务端Cookie完全依赖 Cron 任务进行兜底清理，用户端下载完后清理
+    if (isUserCookie) {
+      ctx.waitUntil((async () => {
+        // 等待 30 秒
+        await new Promise(resolve => setTimeout(resolve, 30 * 1000));
+        try {
+          // console.log(`Cleaning up user directory: ${transferDir}`);
+          await client.deleteFiles([transferDir]);
+        } catch (err) {
+          console.error(`Failed to clean user directory ${transferDir}:`, err);
+        }
+      })());
+    }
 
   } catch (e) {
     // 发生严重异常时立即尝试清理
@@ -289,10 +305,10 @@ export class BaiduDiskClient {
     }
   }
 
-  async fetchJson(url, options = {}, shouldupdateCookies=false) {
+  async fetchJson(url, options = {}, shouldupdateCookies = false) {
     const headers = { ...this.commonHeaders, ...options.headers };
     const resp = await fetch(url, { ...options, headers });
-    if(shouldupdateCookies) this.updateCookies(resp.headers.getSetCookie());
+    if (shouldupdateCookies) this.updateCookies(resp.headers.getSetCookie());
     const data = await resp.json();
     return data;
   }
@@ -308,12 +324,12 @@ export class BaiduDiskClient {
           'https://pcs.baidu.com/rest/2.0/pcs/file?method=plantcookie&type=ett',
           'https://pcs.baidu.com/rest/2.0/pcs/file?method=plantcookie&type=stoken&source=pcs',
         ]
-        for(let api of pcsUrls){
-          let resp = await fetch(api, {headers: this.commonHeaders});
+        for (let api of pcsUrls) {
+          let resp = await fetch(api, { headers: this.commonHeaders });
           this.updateCookies(resp.headers.getSetCookie());
           await resp.body.cancel();
         }
-        
+
         return true;
       }
       return false;
