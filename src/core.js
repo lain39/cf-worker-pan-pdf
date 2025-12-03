@@ -225,13 +225,28 @@ function shuffleArray(array) {
 }
 
 function getShareInfo(link) {
+  const text = link.trim();
   let surl = "", pwd = "";
-  let m = link.match(/pan\.baidu\.com\/s\/([^\?&]+)/);
-  if (m) surl = m[1];
-  if (!surl) { m = link.match(/surl=([^&]+)/); if (m) surl = '1' + m[1]; }
-  m = link.match(/pwd=([^&#]+)/);
+
+  let m = text.match(/(?:^|\s)(?:https?:\/\/)?(?:pan|yun)\.baidu\.com\/s\/([\w\-]+)/);
+  if (m) {
+      surl = m[1];
+  } else {
+      m = text.match(/(?:^|\s)(?:https?:\/\/)?(?:pan|yun)\.baidu\.com\/share\/init\?.*surl=([\w\-]+)/); 
+      if (m) surl = '1' + m[1];
+  }
+
+  m = text.match(/[?&]pwd=([a-zA-Z0-9]{4})\b/);
+  
+  // 如果没找到，尝试匹配中文文本 "提取码: xxxx" 或 "pwd: xxxx"
+  if (!m) {
+      m = text.match(/(?:pwd|码|code)[\s:：=]+([a-zA-Z0-9]{4})\b/i);
+  }
+
   if (m) pwd = m[1];
-  if (!surl) throw new Error("Invalid Link");
+
+  if (!surl) throw new Error("无效的百度网盘链接 (Invalid Link)");
+  
   return { surl, pwd };
 }
 
