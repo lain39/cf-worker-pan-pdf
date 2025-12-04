@@ -1,16 +1,15 @@
 {
-    "name": "cf-worker-pan-pdf",
-    "main": "src/index.js",
-    "compatibility_date": "2025-12-02",
-
-    "workers_dev": true,
-    "preview_urls": false,
-    
-    "vars": {
-      "ENABLE_AUTH": true
-    },
-  
-    "triggers": {
-      "crons": ["0 */2 * * *"]
-    }
+  "name": "cf-worker-pan-pdf",
+  "main": "src/index.js",
+  "compatibility_date": "2025-12-02",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "ENABLE_AUTH": false
+  },
+  "triggers": {
+    "crons": [
+      "0 */2 * * *"
+    ]
   }
+}

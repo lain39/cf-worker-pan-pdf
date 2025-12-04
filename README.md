@@ -16,7 +16,9 @@
 - **⚡️ Serverless 架构**：无需服务器，直接部署在 Cloudflare Workers 上。
 - **🔄 智能账号轮询**：支持配置多个 Cookie，采用**随机轮询**策略。
 - **🔐 OAuth 2.0 鉴权**：集成了 **Linux.do Connect** 登录。
-- **⏰ 自动清理**：配合 Cron Triggers 定时清理网盘内的临时转存文件。
+- **⏰ 智能清理**：配合 Cron Triggers 定时清理网盘内的临时转存文件以及验证Cookie有效性。
+  -  错峰清理：并发请求自动错峰。
+  -  优先清理：可以配置 KV 记录清理时间以及账号有效性，优先清理最久未处理的账号。
 - **📱 响应式 UI**：优雅的移动端与桌面端适配，支持批量解析、Aria2 推送。
 - **🕵️‍♂️ 隐私保护**：透传客户端 User-Agent，伪装成浏览器正常预览行为。
 
@@ -64,14 +66,34 @@ npm install
 npx wrangler login
 ```
 
-### 3. 配置 Wrangler
+### 3. 创建 KV 命名空间 (如果需要该配置)
+
+如果账号较多，KV 用于存储失效账号黑名单和清理历史，能大幅提升稳定性。
+```bash
+npx wrangler kv namespace create COOKIE_DB
+```
+
+运行后，终端会输出一个 id（例如 e0a1b2...）。请复制这个 ID。
+
+### 4. 配置 Wrangler
 
 本项目使用 `wrangler.jsonc` 进行配置。
 
 1.  修改 `wrangler.jsonc` 中的 `ENABLE_AUTH` 来配置是否开启linux do connect鉴权。
 2.  确认 `crons` 定时任务频率（默认每 2小时）。
+3.  如果要启用 KV 来管理Cookie，请加入如下配置: 
+```jsonc
+//wrangler.jsonc
+//如果不配置 KV，程序将自动降级为“无状态模式”（无黑名单记忆，随机清理）。
+"kv_namespaces": [
+  {
+    "binding": "COOKIE_DB",
+    "id": "你的_KV_ID_粘贴到这里"
+  }
+]
+```
 
-### 4. 设置敏感数据 (Secrets)
+### 5. 设置敏感数据 (Secrets)
 
 **这是最重要的一步**。请不要将敏感信息直接写在代码里，使用 Cloudflare Secrets 存储。
 
@@ -92,7 +114,7 @@ npx wrangler secret put LINUX_DO_CLIENT_ID
 npx wrangler secret put LINUX_DO_CLIENT_SECRET
 ```
 
-### 5. 部署上线
+### 6. 部署上线
 
 ```bash
 npx wrangler deploy
