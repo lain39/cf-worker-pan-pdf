@@ -6,12 +6,13 @@ const DEFAULT_UA = "netdisk";
 const DEFAULT_PDF_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 // KV 键名常量
-const KV_BLOCK_KEY = "blocked_cookies";      // 失效Cookie Key
-const KV_CLEAN_HISTORY_KEY = "clean_history"; // 清理历史 Key (记录上次清理时间)
+const KV_BLOCK_KEY = "blocked_cookies";      // 黑名单 Key
+const KV_CLEAN_HISTORY_KEY = "clean_history"; // 清理历史 Key
+const KV_COOKIE_POOL_KEY = "server_cookies_pool"; // Cookie 池 Key
 
 // 配置常量
-const CLEAN_BATCH_SIZE = 5; // 每次 Cron 任务清理的账号数量
-const STAGGER_MS = 1000;    // 错峰启动间隔 (毫秒)
+const CLEAN_BATCH_SIZE = 5; 
+const STAGGER_MS = 1000;    
 
 // --- API Handles ---
 
@@ -43,22 +44,24 @@ export async function handleDownload(body, clientIP, env, ctx, userAgent) {
 
   // 2. 如果没有自定义 Cookie，则从服务器池中获取
   if (!validCookieFound) {
-    const serverCookies = getServerCookies(env);
-    if (serverCookies.length === 0) throw new Error("无可用 Cookie，请联系管理员。");
+    // 异步获取 Cookie 池 (支持 KV)
+    const serverCookies = await getCookiePool(env);
+    
+    if (serverCookies.length === 0) throw new Error("无可用 Cookie，请联系管理员 (请检查 KV 或 Secret 配置)。");
 
-    // 获取 KV 中的黑名单 (如果 KV 未开启，返回空数组)
+    // 获取 KV 中的黑名单
     const blockedList = await getKvValue(env, KV_BLOCK_KEY, []);
     
     // 过滤掉黑名单中的 Cookie
     let availableCookies = serverCookies.filter(c => !blockedList.includes(c));
 
-    // 兜底策略：如果全军覆没，尝试全量复活
+    // 兜底策略
     if (availableCookies.length === 0) {
         console.warn("All cookies are blocked. Retrying with full list...");
         availableCookies = serverCookies;
     }
 
-    // 随机打乱，负载均衡
+    // 随机打乱
     const shuffledCookies = shuffleArray(availableCookies);
 
     for (const sCookie of shuffledCookies) {
@@ -69,7 +72,6 @@ export async function handleDownload(body, clientIP, env, ctx, userAgent) {
         validCookieFound = true;
         break;
       } else {
-        // 发现坏 Cookie，尝试加入 KV 黑名单
         console.warn(`Cookie invalid, adding to blocklist...`);
         ctx.waitUntil(addBlockedCookieToKV(env, sCookie));
       }
@@ -170,63 +172,40 @@ export async function handleDownload(body, clientIP, env, ctx, userAgent) {
   return { success: true, files: validFiles, errors: errors };
 }
 
-/**
- * 1. 如果有 KV：优先清理最久没清理过的 (LRU)
- * 2. 如果无 KV：随机清理一批 (Random)
- */
 export async function handleCleanDir(env) {
-  const serverCookies = getServerCookies(env);
+  // 改为异步获取
+  const serverCookies = await getCookiePool(env);
   if (serverCookies.length === 0) return "No cookies configured";
 
   let targetCookies = [];
   const kvEnabled = !!env.COOKIE_DB;
 
   if (kvEnabled) {
-      // --- 模式 A: 基于 KV 的 LRU 策略 ---
-      console.log("KV Detected. Using LRU cleanup strategy.");
-      
-      // 读取清理历史: { "cookie_part": timestamp, ... }
+      // LRU 策略
       const history = await getKvValue(env, KV_CLEAN_HISTORY_KEY, {});
-      
-      // 排序：从未清理过的 (timestamp 0) > 清理时间最早的 > 清理时间最近的
-      // 需要一个稳定的 ID 来标识 Cookie，这里取前 50 个字符作为 ID
       const getCookieId = (c) => c.substring(0, 50);
-
       const sortedCookies = [...serverCookies].sort((a, b) => {
           const timeA = history[getCookieId(a)] || 0;
           const timeB = history[getCookieId(b)] || 0;
-          return timeA - timeB; // 升序：小的在前 (0 或 老时间)
+          return timeA - timeB; 
       });
-
-      // 选取 Top N
       targetCookies = sortedCookies.slice(0, CLEAN_BATCH_SIZE);
   } else {
-      // --- 模式 B: 随机降级策略 ---
-      console.log("No KV Detected. Using Random cleanup strategy.");
-      // 随机打乱并取前 N 个
       targetCookies = shuffleArray(serverCookies).slice(0, CLEAN_BATCH_SIZE);
   }
 
   console.log(`Starting batched cleanup. Targets: ${targetCookies.length}, Total: ${serverCookies.length}`);
 
-  // 执行并发清理 (带错峰)
   const results = [];
   const successCookies = [];
 
-  // 并发请求映射
   const tasks = targetCookies.map(async (cookie, index) => {
-      // 错峰启动
       if (index > 0) await new Promise(r => setTimeout(r, index * STAGGER_MS));
-
       try {
           const client = new BaiduDiskClient(cookie);
-          // 简单的鉴权检查，避免无效 Cookie 浪费时间
           await client.init(); 
           if (!client.bdstoken) return { status: 'skipped' };
-
           await client.deleteFiles(["/netdisk"]);
-          
-          // 记录成功的 Cookie 用于后续更新 KV
           successCookies.push(cookie);
           return { status: 'success' };
       } catch (e) {
@@ -235,57 +214,42 @@ export async function handleCleanDir(env) {
   });
 
   const runRes = await Promise.allSettled(tasks);
-  
-  // 统计结果
   runRes.forEach(r => {
       if (r.status === 'fulfilled') results.push(r.value.status);
       else results.push('error');
   });
 
-  // 如果开启了 KV，更新清理时间记录
   if (kvEnabled && successCookies.length > 0) {
       try {
-          // 重新读取一次 KV (防止并发覆盖)
           const history = await getKvValue(env, KV_CLEAN_HISTORY_KEY, {});
           const now = Date.now();
           const getCookieId = (c) => c.substring(0, 50);
-
-          // 更新成功的账号时间
           successCookies.forEach(c => {
               history[getCookieId(c)] = now;
           });
-
-          // 简单的垃圾回收：移除 history 中已经不在 serverCookies 里的旧账号
           const activeIds = new Set(serverCookies.map(getCookieId));
           const cleanHistory = {};
           for (let k in history) {
               if (activeIds.has(k)) cleanHistory[k] = history[k];
           }
-
-          // 写回 KV
           await env.COOKIE_DB.put(KV_CLEAN_HISTORY_KEY, JSON.stringify(cleanHistory));
-          console.log(`Updated cleanup history for ${successCookies.length} accounts.`);
-      } catch (e) {
-          console.error("Failed to update cleanup history KV:", e);
-      }
+      } catch (e) {}
   }
 
   return `Batch Cleanup Done. Results: ${JSON.stringify(results)}`;
 }
 
-// 定时健康检查任务 (KV 可选)
 export async function checkHealth(env) {
-  const serverCookies = getServerCookies(env);
+  // 改为异步获取
+  const serverCookies = await getCookiePool(env);
   const results = [];
   const currentBlockedList = [];
   const kvEnabled = !!env.COOKIE_DB;
 
-  console.log(`Starting Health Check. KV Enabled: ${kvEnabled}`);
+  console.log(`Starting Health Check. KV Enabled: ${kvEnabled}. Pool Size: ${serverCookies.length}`);
 
   const checkPromises = serverCookies.map(async (cookie, index) => {
-      // 错峰检测，防止并发过高
       if (index > 0) await new Promise(r => setTimeout(r, index * 200));
-      
       const client = new BaiduDiskClient(cookie);
       const alive = await client.init();
       return { cookie, alive };
@@ -306,16 +270,41 @@ export async function checkHealth(env) {
   return results;
 }
 
-// --- KV Helper Functions ---
+// --- Helper Functions ---
 
-// 通用 KV 读取函数，自带异常处理
+// 获取 Cookie 池 (KV 优先 -> Secret 降级)
+async function getCookiePool(env) {
+    // 1. 尝试从 KV 读取
+    if (env.COOKIE_DB) {
+        try {
+            const kvList = await env.COOKIE_DB.get(KV_COOKIE_POOL_KEY, { type: "json" });
+            if (Array.isArray(kvList) && kvList.length > 0) {
+                return kvList;
+            }
+        } catch(e) {
+            console.warn("Failed to read cookie pool from KV:", e);
+        }
+    }
+
+    // 2. 降级：尝试从环境变量/Secret 读取
+    if (env.SERVER_COOKIES) {
+        try {
+            const parsed = JSON.parse(env.SERVER_COOKIES);
+            if (Array.isArray(parsed)) return parsed;
+        } catch (e) {
+            console.error("Failed to parse SERVER_COOKIES env", e);
+        }
+    }
+
+    return [];
+}
+
 async function getKvValue(env, key, defaultValue) {
     if (!env.COOKIE_DB) return defaultValue;
     try {
         const val = await env.COOKIE_DB.get(key, { type: "json" });
         return val === null ? defaultValue : val;
     } catch (e) {
-        console.warn(`KV Read Error [${key}]:`, e);
         return defaultValue;
     }
 }
@@ -328,23 +317,7 @@ async function addBlockedCookieToKV(env, cookie) {
             list.push(cookie);
             await env.COOKIE_DB.put(KV_BLOCK_KEY, JSON.stringify(list));
         }
-    } catch (e) {
-        console.warn("KV Write Error:", e);
-    }
-}
-
-// --- Standard Helper Functions ---
-
-function getServerCookies(env) {
-  try {
-    if (env.SERVER_COOKIES) {
-      const parsed = JSON.parse(env.SERVER_COOKIES);
-      if (Array.isArray(parsed)) return parsed;
-    }
-  } catch (e) {
-    console.error("Failed to parse SERVER_COOKIES", e);
-  }
-  return [];
+    } catch (e) {}
 }
 
 function shuffleArray(array) {

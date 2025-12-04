@@ -114,6 +114,16 @@ npx wrangler secret put LINUX_DO_CLIENT_ID
 npx wrangler secret put LINUX_DO_CLIENT_SECRET
 ```
 
+如果开启了KV来管理Cookie，可以用以下命令将Cookies传到Cloudflare KV：
+```bash
+# 先准备好cookies.json文件：["BDUSS=xxx", "BDUSS=yyy"...]
+npx wrangler kv key put --binding=COOKIE_DB "server_cookies_pool" --path=cookies.json --remote
+```
+如果你在本地开发 (npm run dev) 也想用这组 Cookie，需要给预览环境也传一份：
+```bash
+npx wrangler kv key put --binding=COOKIE_DB "server_cookies_pool" --path=cookies.json --preview
+```
+
 ### 6. 部署上线
 
 ```bash
