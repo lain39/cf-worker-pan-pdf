@@ -1,6 +1,6 @@
 {
     "name": "cf-worker-pan-pdf",
-    "version": "1.1.2",
+    "version": "1.2.0",
     "description": "BaiduDisk PDF Preview Service on Cloudflare Workers",
     "main": "src/index.js",
     "scripts": {
