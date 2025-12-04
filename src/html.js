@@ -49,7 +49,7 @@ export const HTML_CONTENT = `<!DOCTYPE html>
             
             <div class="flex items-center gap-3">
                 <transition name="fade">
-                    <button v-if="resultLinks.length > 0 || failedList.length > 0" @click="showResultModal = true" class="w-10 h-10 rounded-full bg-white border border-slate-200 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 transition-colors flex items-center justify-center shadow-sm" title="查看结果">
+                    <button v-if="resultLinks.length > 0 || failedList.length > 0 || skippedList.length > 0" @click="showResultModal = true" class="w-10 h-10 rounded-full bg-white border border-slate-200 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 transition-colors flex items-center justify-center shadow-sm" title="查看结果">
                         <i class="fa-solid fa-list-check"></i>
                     </button>
                 </transition>
@@ -202,7 +202,21 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                     </div>
                     
                     <div class="p-0 overflow-y-auto bg-slate-50/50 flex-1">
-                        <!-- Failed Retry Section -->
+                        
+                        <!-- Skipped Files Section (Yellow) -->
+                        <div v-if="skippedList.length > 0" class="p-4 bg-yellow-50 border-b border-yellow-100">
+                            <div class="flex items-center gap-2 text-yellow-700 mb-2">
+                                <i class="fa-solid fa-triangle-exclamation"></i>
+                                <span class="text-sm font-bold">跳过了 {{ skippedList.length }} 个大于 150MB 的文件</span>
+                            </div>
+                            <ul class="list-disc list-inside text-xs text-yellow-600 space-y-1 max-h-32 overflow-y-auto pl-1">
+                                <li v-for="(file, idx) in skippedList" :key="idx" class="truncate">
+                                    {{ file.server_filename }} <span class="opacity-75">({{ formatSize(file.size) }})</span>
+                                </li>
+                            </ul>
+                        </div>
+
+                        <!-- Failed Retry Section (Orange) -->
                         <div v-if="failedList.length > 0 || isRetrying" class="p-4 bg-orange-50 border-b border-orange-100 flex items-center justify-between sticky top-0 z-20">
                             <div class="flex items-center gap-2 text-orange-700">
                                 <i class="fa-solid fa-circle-exclamation"></i>
@@ -216,7 +230,7 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                             </button>
                         </div>
 
-                        <!-- Errors Log (Optional) -->
+                        <!-- API Errors Log (Red) -->
                         <div v-if="resultErrors.length > 0" class="p-4 bg-red-50 border-b border-red-100">
                             <h4 class="text-red-700 font-bold text-sm mb-2">错误日志:</h4>
                             <ul class="list-disc list-inside text-xs text-red-600 space-y-1">
@@ -252,7 +266,7 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                                 </div>
                             </div>
                         </div>
-                        <div v-else-if="resultErrors.length === 0 && failedList.length === 0" class="p-10 text-center text-slate-400">
+                        <div v-else-if="resultErrors.length === 0 && failedList.length === 0 && skippedList.length === 0" class="p-10 text-center text-slate-400">
                             无有效文件链接
                         </div>
                     </div>
@@ -324,8 +338,9 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                 const dirCache = ref({});
                 const resultLinks = ref([]);
                 const resultErrors = ref([]);
-                const failedList = ref([]); // 存储失败的文件对象
-                const isRetrying = ref(false); // 重试状态
+                const failedList = ref([]); // 解析失败的文件
+                const skippedList = ref([]); // 跳过的大文件
+                const isRetrying = ref(false); 
 
                 const cookieConfig = ref({
                     bduss: '',
@@ -397,18 +412,16 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                     }
                 };
 
-                // --- 递归扫描文件逻辑 (Client Side Recursion) ---
+                // --- 递归扫描文件逻辑 ---
                 const scanFilesRecursive = async (items) => {
                     let files = [];
-                    // 并发扫描当前层级的文件夹 (限制并发 3，避免把浏览器或API卡死)
                     const chunks = [];
                     const concurrency = 3;
                     
                     for (let item of items) {
                         if (item.isdir == 1) {
-                            // 是文件夹，需要深入
                             chunks.push(async () => {
-                                loadingText.value = '正在扫描目录: ' + item.server_filename + '...'; // UI 提示
+                                loadingText.value = '正在扫描目录: ' + item.server_filename + '...'; 
                                 const children = await loadDirectoryContent(item.path);
                                 if (children && children.length > 0) {
                                     const subFiles = await scanFilesRecursive(children);
@@ -416,15 +429,12 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                                 }
                             });
                         } else {
-                            // 是文件，直接加入
                             files.push(item);
                         }
                     }
 
-                    // 执行并发队列
                     let active = 0;
                     let index = 0;
-                    
                     const run = async () => {
                         if (index >= chunks.length) return;
                         const p = chunks[index++]();
@@ -448,48 +458,46 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                      loadingDir.value = true; 
                      processing.value = true;
                      
-                     // 如果不是重试，清空所有结果；如果是重试，不清空成功列表，但重置失败列表
                      if (!isRetry) {
+                         // 全新任务：重置所有列表
                          resultLinks.value = [];
                          resultErrors.value = [];
                          failedList.value = [];
+                         skippedList.value = [];
                      } else {
-                         // 重试时，假设所有待重试的都从 failedList 移除了，稍后失败的会重新加回来
+                         // 重试任务：只重置失败列表和错误日志，保留之前的结果和跳过列表
                          failedList.value = [];
-                         resultErrors.value = []; // 清空之前的错误日志，避免混淆
+                         resultErrors.value = []; 
                      }
                      
                      try {
                         let targetFiles = [];
                         
                         if (isRetry) {
-                            // 重试模式：直接使用传入的文件列表 (无需重新扫描目录)
                             loadingText.value = '准备重试失败任务...';
                             targetFiles = files;
                         } else {
-                            // 正常模式：扫描目录
                             loadingText.value = '正在递归扫描目录结构 (文件较多可能需要一点时间)...';
                             const rawItems = JSON.parse(JSON.stringify(files));
                             const allFiles = await scanFilesRecursive(rawItems);
                             
                             // 过滤大文件
-                            const target = allFiles.filter(f => f.size <= 157286400);
-                            const skippedFiles = allFiles.filter(f => f.size > 157286400);
+                            targetFiles = allFiles.filter(f => f.size <= 157286400);
+                            const skipped = allFiles.filter(f => f.size > 157286400);
                             
-                            if (skippedFiles.length > 0) {
-                                const names = skippedFiles.map(f => f.server_filename).join(', ');
-                                resultErrors.value.push('跳过了 ' + skippedFiles.length + ' 个大于 150MB 的文件: ' + names);
+                            if (skipped.length > 0) {
+                                skippedList.value = skipped; // 存入跳过列表供 UI 显示
                             }
-                            
-                            targetFiles = target;
                         }
 
                         if (targetFiles.length === 0) {
-                            if (!isRetry) alert("没有符合条件的文件");
+                            if (!isRetry && skippedList.value.length === 0) alert("没有符合条件的文件");
+                            // 如果全是跳过的文件，也应该显示结果弹窗
+                            if (skippedList.value.length > 0) showResultModal.value = true;
                             return;
                         }
 
-                        // 3. 分批处理
+                        // 分批处理
                         const BATCH_SIZE = 10; 
                         const totalBatches = Math.ceil(targetFiles.length / BATCH_SIZE);
                         
@@ -510,11 +518,7 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                                 if (res.files) {
                                     resultLinks.value.push(...res.files);
                                     
-                                    // 【核心逻辑】计算本批次失败的文件
-                                    // 后端只返回成功的文件列表，且 filename 属性是原始文件名 (未加 .pdf)
                                     const successNames = new Set(res.files.map(f => f.filename));
-                                    
-                                    // 找出 batch 中未出现在 successNames 里的文件 -> 视为失败
                                     const batchFailures = batch.filter(f => !successNames.has(f.server_filename));
                                     if (batchFailures.length > 0) {
                                         failedList.value.push(...batchFailures);
@@ -527,7 +531,6 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                                 
                             } catch (e) {
                                 resultErrors.value.push('Batch ' + batchNum + ' failed: ' + e.message);
-                                // 整个批次因网络/超时失败，全部加入失败列表
                                 failedList.value.push(...batch);
                             }
                         }
@@ -540,7 +543,7 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                         processing.value = false;
                         loadingDir.value = false; 
                         loadingText.value = '';
-                        isRetrying.value = false; // 重置重试状态
+                        isRetrying.value = false; 
                      }
                 };
 
@@ -553,7 +556,6 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                 const retryFailed = async () => {
                     if (failedList.value.length === 0) return;
                     isRetrying.value = true;
-                    // 创建副本进行重试
                     const filesToRetry = [...failedList.value];
                     await runDownloadTask(filesToRetry, true);
                 };
@@ -601,7 +603,7 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                         await sendToLocalAria2Logic(item);
                         alert("已推送到本地 Aria2");
                     } catch(e) {
-                        alert("推送失败: " + e.message + "\n请检查本地 Aria2 配置或 Mixed Content 问题");
+                        alert("推送失败: " + e.message + "\\n请检查本地 Aria2 配置或 Mixed Content 问题");
                     }
                 };
 
@@ -699,7 +701,7 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                 return {
                     link, loading, loadingDir, loadingText, processing, errorMsg, hasData,
                     currentList, currentPath, selectedCount, isAllSelected,
-                    showResultModal, showSettingsModal, resultLinks, resultErrors, failedList, cookieConfig, isRetrying,
+                    showResultModal, showSettingsModal, resultLinks, resultErrors, failedList, skippedList, cookieConfig, isRetrying,
                     analyzeLink, submitDownload, retryFailed, downloadSingle, handleNameClick, handleSelectionClick, toggleSelection,
                     goUp, resetToRoot, toggleAll, formatSize, getIcon, getIconClass, isFolder, isSupported,
                     copyLink, saveConfig, sendToLocalAria2, batchSendToAria2, openLink
