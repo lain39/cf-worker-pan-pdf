@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://github.com/lain39/cf-worker-pan-pdf" title="cf-worker-pan-pdf's Github repository.">
-    <img src="https://github.com/user-attachments/assets/28ce9592-f407-4fe0-b627-153493c532ef" width="80" height="auto"/>
+    <img src="https://github.com/user-attachments/assets/12b8cef5-5442-47de-b96e-ca750c076fc5" height="120" width="auto"/>
   </a>
   <p align="center">
     <a href="https://github.com/lain39/cf-worker-pan-pdf/releases">
@@ -36,7 +36,6 @@
   -  错峰清理：并发请求自动错峰。
   -  优先清理：可以配置 KV 记录清理时间以及账号有效性，优先清理最久未处理的账号。
 - **📱 响应式 UI**：优雅的移动端与桌面端适配，支持批量解析、Aria2 推送。
-- **🕵️‍♂️ 隐私保护**：透传客户端 User-Agent，伪装成浏览器正常预览行为。
 
 ## 📢 注意
 - 不能用同账号的Cookie下载该账号分享的文件，因为自己不能转存自己的分享。
