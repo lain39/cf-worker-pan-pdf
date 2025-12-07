@@ -642,19 +642,28 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                     }
                 };
 
-                // --- 递归扫描文件逻辑 ---
-                const scanFilesRecursive = async (items) => {
+                // --- 递归扫描文件逻辑 (包含相对路径构建) ---
+                const scanFilesRecursive = async (items, parentPath = '') => {
                     let files = [];
                     const chunks = [];
                     const concurrency = 3;
                     
                     for (let item of items) {
+                        // 构建当前项的相对路径
+                        const currentItemPath = parentPath 
+                            ? parentPath + '/' + item.server_filename 
+                            : item.server_filename;
+                        
+                        // 将相对路径附加到对象上，方便后续使用
+                        item.relativePath = currentItemPath;
+
                         if (item.isdir == 1) {
                             chunks.push(async () => {
-                                loadingText.value = '正在扫描目录: ' + item.server_filename + '...'; 
+                                loadingText.value = '正在扫描目录: ' + currentItemPath + '...'; 
                                 const children = await loadDirectoryContent(item.path);
                                 if (children && children.length > 0) {
-                                    const subFiles = await scanFilesRecursive(children);
+                                    // 递归调用时传入当前路径作为父路径
+                                    const subFiles = await scanFilesRecursive(children, currentItemPath);
                                     files.push(...subFiles);
                                 }
                             });
@@ -709,7 +718,8 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                         } else {
                             loadingText.value = '正在递归扫描目录结构 (文件较多可能需要一点时间)...';
                             const rawItems = JSON.parse(JSON.stringify(files));
-                            const allFiles = await scanFilesRecursive(rawItems);
+                            // 开始递归扫描，初始父路径为空
+                            const allFiles = await scanFilesRecursive(rawItems, '');
                             
                             // 过滤大文件
                             targetFiles = allFiles.filter(f => f.size <= 157286400);
@@ -734,17 +744,22 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                             loadingText.value = '正在解析第 ' + batchNum + ' / ' + totalBatches + ' 批 (共 ' + targetFiles.length + ' 个文件)...';
                             
                             try {
-                                const fs_ids = batch.map(f => f.fs_id);
+                                const filesPayload = batch.map(f => ({
+                                    fs_id: f.fs_id,
+                                    relativePath: f.relativePath, // 发送 Web 端构建的完整路径，主键
+                                    server_filename: f.server_filename
+                                }));
+
                                 const res = await apiCall('/api/download', {
-                                    fs_ids: fs_ids,
+                                    files: filesPayload,
                                     share_data: shareData.value,
                                     cookie: cookieConfig.value.bduss
                                 });
                                 
                                 if (res.files) {
                                     resultLinks.value.push(...res.files);
-                                    const successNames = new Set(res.files.map(f => f.filename));
-                                    const batchFailures = batch.filter(f => !successNames.has(f.server_filename));
+                                    const successPaths = new Set(res.files.map(f => f.relativePath));
+                                    const batchFailures = batch.filter(f => !successPaths.has(f.relativePath));
                                     if (batchFailures.length > 0) failedList.value.push(...batchFailures);
                                 }
                                 if (res.errors && res.errors.length > 0) resultErrors.value.push(...res.errors);
@@ -794,7 +809,7 @@ export const HTML_CONTENT = `<!DOCTYPE html>
                 };
 
                 const sendToLocalAria2Logic = async (item) => {
-                    const ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0";
+                    const ua = navigator.userAgent || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0";
                     const outPath = item.relativePath || item.filename;
                     const payload = {
                         jsonrpc: '2.0',

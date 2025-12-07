@@ -26,14 +26,25 @@ export async function handleList(body) {
 }
 
 export async function handleDownload(body, clientIP, env, ctx, userAgent) {
-  const { fs_ids, share_data, cookie } = body;
-  if (!fs_ids || !share_data) throw new Error("Missing parameters");
+  const { files, share_data, cookie } = body;
+  
+  if (!files || !Array.isArray(files) || !share_data) throw new Error("Missing parameters: files array required");
+
+  // 1. 建立原始信息映射表: fs_id -> fileInfo
+  const fsIdMap = new Map(); 
+  const targetFsIds = [];
+  
+  files.forEach(f => {
+    const fid = String(f.fs_id);
+    fsIdMap.set(fid, f);
+    targetFsIds.push(fid);
+  });
 
   let client = null;
   let isUserCookie = false;
   let validCookieFound = false;
 
-  // 1. 优先尝试用户传入的自定义 Cookie
+  // 2. 优先尝试用户传入的自定义 Cookie
   if (cookie && cookie.trim().length > 0 && cookie.includes("BDUSS")) {
     client = new BaiduDiskClient(cookie, clientIP);
     if (await client.init()) {
@@ -42,7 +53,7 @@ export async function handleDownload(body, clientIP, env, ctx, userAgent) {
     }
   }
 
-  // 2. 如果没有自定义 Cookie，则从服务器池中获取
+  // 3. 如果没有自定义 Cookie，则从服务器池中获取
   if (!validCookieFound) {
     const serverCookies = await getCookiePool(env);
 
@@ -91,50 +102,75 @@ export async function handleDownload(body, clientIP, env, ctx, userAgent) {
   const validFiles = [];
 
   try {
-    // 3. 创建目录 & 转存
+    // 4. 创建目录 & 转存
     await client.createDir(transferDir);
 
+    let transferResult = null;
     try {
-      await client.transferFiles(fs_ids, share_data.shareid, share_data.uk, share_data.sekey, transferDir);
+      transferResult = await client.transferFiles(targetFsIds, share_data.shareid, share_data.uk, share_data.sekey, transferDir);
     } catch (e) {
       console.warn("First transfer attempt failed, retrying...", e.message);
       await client.createDir(transferDir);
       await new Promise(r => setTimeout(r, 500));  // 等待创建生效
-      await client.transferFiles(fs_ids, share_data.shareid, share_data.uk, share_data.sekey, transferDir);
+      transferResult = await client.transferFiles(targetFsIds, share_data.shareid, share_data.uk, share_data.sekey, transferDir);
     }
 
-    // 4. 递归获取文件
+    // 5. 建立 [转存后完整路径] -> [原始文件信息] 的精确映射
+    // transferResult.extra.list = [{ from_fs_id: 123, to: "/path/file(1).pdf", ... }]
+    const tempPathToOriginalMap = new Map();
+    if (transferResult && transferResult.extra && Array.isArray(transferResult.extra.list)) {
+      transferResult.extra.list.forEach(item => {
+        if (item.to && item.from_fs_id) {
+          const fid = String(item.from_fs_id);
+          const originalInfo = fsIdMap.get(fid);
+          if (originalInfo) {
+            // Key: 临时目录下的完整路径, Value: 原始文件对象(含 relativePath)
+            tempPathToOriginalMap.set(item.to, originalInfo);
+          }
+        }
+      });
+    }
+
+    // 6. 递归获取文件
     const localFiles = [];
     await recursiveListFiles(client, transferDir, localFiles);
     if (localFiles.length === 0) throw new Error("No files found after transfer");
 
-    const filesToProcess = localFiles.map(f => f.path);
-
-    const pathInfoMap = {};
-    localFiles.forEach(f => {
-      let relative = f.path;
-      if (f.path.startsWith(transferDir)) relative = f.path.substring(transferDir.length + 1);
-      pathInfoMap[f.path] = { size: f.size, filename: f.server_filename, relativePath: relative };
-    });
-
-    // 5. 改名处理 (PDF重命名) - 批量模式
+    // 7. 准备重命名处理
     const renameList = [];
-    const newPaths = [];
+    const filesToProcess = [];
 
-    for (const path of filesToProcess) {
-      const info = pathInfoMap[path];
-      if (info.size > 150 * 1024 * 1024) {
-        errors.push(`Skipped ${info.filename}: Size > 150MB`);
+    for (const f of localFiles) {
+      // 通过当前文件的完整路径 (f.path) 找回原始信息
+      const originalInfo = tempPathToOriginalMap.get(f.path);
+      
+      // 如果找不到映射，说明这个文件不是我们这批次请求的（极小概率），或者映射逻辑出错
+      if (!originalInfo) {
+        errors.push(`Failed to map file back to source: ${f.path}`);
         continue;
       }
-      const newName = info.filename + ".pdf";
-      renameList.push({ path: path, newname: newName });
 
-      const newPath = path + ".pdf";
-      newPaths.push(newPath);
-      pathInfoMap[newPath] = info;
+      // 使用原始 relativePath 进行日志记录和返回
+      const displayPath = originalInfo.relativePath;
+
+      if (f.size > 150 * 1024 * 1024) {
+        errors.push(`Skipped ${displayPath}: Size > 150MB`);
+        continue;
+      }
+
+      const newName = f.server_filename + ".pdf";
+      renameList.push({ path: f.path, newname: newName });
+      
+      filesToProcess.push({
+        currentPath: f.path,
+        newPath: f.path + ".pdf",
+        size: f.size,
+        filename: f.server_filename,
+        relativePath: originalInfo.relativePath 
+      });
     }
 
+    // 8. 执行批量重命名 (PDF后缀)
     if (renameList.length > 0) {
       try {
         const renameSuccess = await client.renameBatch(renameList);
@@ -146,25 +182,24 @@ export async function handleDownload(body, clientIP, env, ctx, userAgent) {
       }
     }
 
-    // 6. 等待同步
+    // 9. 等待同步
     await new Promise(r => setTimeout(r, 1500));
 
-    // 7. 获取链接
+    // 10. 获取链接
     const targetUA = userAgent || DEFAULT_PDF_UA;
 
-    for (const path of newPaths) {
-      const info = pathInfoMap[path];
+    for (const item of filesToProcess) {
       try {
-        const dlink = await client.getSmallFileLink(path, targetUA);
+        const dlink = await client.getSmallFileLink(item.newPath, targetUA);
         validFiles.push({
-          path: path.slice(0, -4),
+          path: item.newPath.slice(0, -4),
           dlink: dlink,
-          size: info.size,
-          filename: info.filename,
-          relativePath: info.relativePath
+          size: item.size,
+          filename: item.filename,
+          relativePath: item.relativePath // 主键
         });
       } catch (e) {
-        errors.push(`Failed to get link for ${info.filename}: ${e.message}`);
+        errors.push(`Failed to get link for ${item.relativePath}: ${e.message}`);
       }
     }
 
