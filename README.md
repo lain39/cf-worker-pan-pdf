@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://github.com/lain39/cf-worker-pan-pdf" title="cf-worker-pan-pdf's Github repository.">
-    <img src="https://github.com/user-attachments/assets/12b8cef5-5442-47de-b96e-ca750c076fc5" height="120" width="auto"/>
+    <img src="https://github.com/user-attachments/assets/1a6f9878-f196-45e9-a3bd-fc26cd29be29" height="120" width="auto"/>
   </a>
   <p align="center">
     <a href="https://github.com/lain39/cf-worker-pan-pdf/releases">
